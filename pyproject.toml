@@ -7,7 +7,7 @@ authors = [
     { name = "rio", email = "rio@kato.com" }
 ]
 requires-python = ">=3.11"
-dependencies = ["litellm"]
+dependencies = ["litellm", "jinja2"]
 
 [project.scripts]
 baseagent = "llmrt._examples.main:main"

@@ -11,83 +11,8 @@ from typing import Any
 from uuid import uuid4
 
 from llmrt import Runner, Runtime
+from llmrt.prompts import render_finder, render_recon, render_verifier
 from llmrt.tools import Report, Shell
-
-RECON_PROMPT = """\
-You are performing reconnaissance for an authorized source-code security audit.
-Your task is to partition the codebase into independently investigable attack
-surfaces for multiple vulnerability-finding agents.
-
-Source root: /workspace
-
-Identify approximately 5–15 distinct subsystems that process untrusted input.
-Prefer partitions by parser, input format, protocol phase, or other distinct
-processing paths. Avoid partitions that are so narrow they describe a single
-statement, so broad they cover most of the project, or overlapping enough that
-several agents would investigate the same path.
-
-Explore the source tree yourself. Begin with source files and entry points,
-then inspect dispatchers, registration tables, format detection, and processing
-functions. For each subsystem give a useful function or file pattern and its
-relevant operations (such as parsing lengths, allocating objects, decompressing,
-or managing state). Do not claim a property that you have not verified in code.
-
-When complete, output exactly one JSON object with a "focus_areas" array of
-self-contained strings. Each string will be passed directly to a separate
-agent as a starting direction. Use this format:
-
-{
-  "focus_areas": [
-    "Subsystem (function or file pattern) — relevant operations",
-    "Other subsystem (function or file pattern) — relevant operations"
-  ]
-}
-
-Output valid JSON only: no markdown fences or commentary. A focus area is a
-starting point, not a prohibition on following relevant calls into other
-subsystems.
-"""
-
-
-FINDER_PROMPT = """\
-You are conducting authorized security research on the source code at /workspace.
-Your task is to find real security vulnerabilities.
-
-Explore the source and understand how untrusted inputs reach security-sensitive
-operations. Investigate suspicious behavior, establish whether it is reachable,
-and verify candidate findings using source evidence or reproducible tests where
-possible. Prioritize vulnerabilities with meaningful security impact over crashes
-that are merely clean error handling or simple denial of service.
-
-When you validate a finding, use the report tool to save a Markdown report with
-its impact, triggering conditions, supporting evidence, and reproduction steps
-where available. Reporting a finding does not end the investigation; continue
-searching for other vulnerabilities.
-"""
-
-
-FINDER_FOCUS_PROMPT = """\
-## Focus area
-Concentrate this investigation on: {focus}
-Begin there. Other investigations can start in different areas, so avoid duplicate
-work. Follow relevant connections across subsystems, and broaden your search
-if the area is exhausted.
-"""
-
-
-VERIFIER_PROMPT = """\
-You are conducting authorized security research on the source code at /workspace.
-Independently verify the vulnerability claim below. Check its triggering
-conditions, attacker control, reachability, and security impact. Look for
-checks or invariants that could invalidate the claim. Reproduce it where
-feasible; do not assume it is correct or investigate unrelated vulnerabilities.
-
-Use the report tool to record whether the claim is confirmed, rejected, or
-inconclusive, with supporting evidence. Distinguish observed facts from
-hypotheses.
-
-Vulnerability claim to verify:
-"""
 
 
 def create_overlay(root: Path) -> Path:
@@ -103,7 +28,6 @@ async def recon(
     llm: Runtime,
     source: Path,
     finder_queue: asyncio.Queue[tuple[int, str] | None],
-    finder_prompt: str | None,
     failures: list[str],
 ) -> None:
     try:
@@ -120,7 +44,7 @@ async def recon(
             raise ValueError("Recon did not emit a valid JSON object with nonempty focus_areas")
         print(f"[recon] Queued {len(areas)} focus areas", file=sys.stderr, flush=True)
         for index, focus in enumerate(areas, 1):
-            focus_prompt = (FINDER_PROMPT if finder_prompt is None else finder_prompt) + "\n" + FINDER_FOCUS_PROMPT.format(focus=focus.strip())
+            focus_prompt = render_finder(focus=focus)
             await finder_queue.put((index, focus_prompt))
     except Exception as exc:
         failures.append("recon")
@@ -154,7 +78,7 @@ async def finder(
 
 
 async def verifier(
-    item: tuple[str, str],
+    item: dict[str, Any],
     *,
     llm: Runtime,
     source: Path,
@@ -162,13 +86,13 @@ async def verifier(
     verified_report_queue: asyncio.Queue[dict[str, Any] | None],
     failures: list[str],
 ) -> None:
-    report_id, claim = item
+    report_id = item["id"]
     try:
         print(f"[verifier {report_id}] Started", file=sys.stderr, flush=True)
         overlay_dir = create_overlay(overlay_root)
         shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=overlay_dir)
         context = await llm.ask(
-            messages=[{"role": "user", "content": VERIFIER_PROMPT + "\n" + claim}],
+            messages=[{"role": "user", "content": render_verifier(item)}],
             tools=[shell, Report(verified_report_queue)],
         )
         result = context[-1]["content"] or ""
@@ -183,7 +107,7 @@ async def save_report(
     report: dict[str, Any],
     *,
     directory: Path,
-    next_queue: asyncio.Queue[tuple[str, str] | None] | None = None,
+    next_queue: asyncio.Queue[dict[str, Any] | None] | None = None,
     failures: list[str],
 ) -> None:
     try:
@@ -195,10 +119,7 @@ async def save_report(
             file.write(body)
 
         if next_queue is not None:
-            claim = f"Finding ID: {report['id']}\nTitle: {report['title']}\n\n{report['content']}"
-            if report.get("evidence"):
-                claim += "\n\nEvidence:\n" + "\n".join(f"- {x}" for x in report["evidence"])
-            await next_queue.put((report["id"], claim))
+            await next_queue.put(report)
     except Exception as exc:
         label = "report" if next_queue is not None else "verified report"
         failures.append(label)
@@ -212,7 +133,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 async def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run a source-code security audit")
     parser.add_argument("source", type=Path)
-    parser.add_argument("prompt", nargs="?", help="Finder prompt (default: built-in prompt)")
     parser.add_argument("--model", required=True)
     parser.add_argument("--api-base")
     args = parser.parse_args(argv)
@@ -230,13 +150,13 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     recon_queue: asyncio.Queue[str | None] = asyncio.Queue()
     finder_queue: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue()
     report_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-    verifier_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+    verifier_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     verified_report_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     failures: list[str] = []
 
     overlay_root = Path("overlays")
     runner = Runner()
-    runner.register(recon_queue, partial(recon, llm=llm, source=source, finder_queue=finder_queue, finder_prompt=args.prompt, failures=failures))
+    runner.register(recon_queue, partial(recon, llm=llm, source=source, finder_queue=finder_queue, failures=failures))
     runner.register(finder_queue, partial(finder, llm=llm, source=source, overlay_root=overlay_root, report_queue=report_queue, failures=failures))
     runner.register(report_queue, partial(save_report, directory=reports / "found", next_queue=verifier_queue, failures=failures))
     runner.register(verifier_queue, partial(verifier, llm=llm, source=source, overlay_root=overlay_root, verified_report_queue=verified_report_queue, failures=failures))
@@ -244,7 +164,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
 
     consumer = asyncio.create_task(runner.run())
     try:
-        await recon_queue.put(RECON_PROMPT)
+        await recon_queue.put(render_recon())
         await recon_queue.join()
         await finder_queue.join()
         await report_queue.join()

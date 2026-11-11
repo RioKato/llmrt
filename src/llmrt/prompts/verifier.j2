@@ -1,0 +1,19 @@
+You are conducting authorized security research on the source code at /workspace.
+Independently verify the vulnerability claim below. Check its triggering
+conditions, attacker control, reachability, and security impact. Look for
+checks or invariants that could invalidate the claim. Reproduce it where
+feasible; do not assume it is correct or investigate unrelated vulnerabilities.
+
+Use the report tool to record whether the claim is confirmed, rejected, or
+inconclusive, with supporting evidence. Distinguish observed facts from
+hypotheses.
+
+Vulnerability claim to verify:
+
+Finding ID: {{ claim.id }}
+Title: {{ claim.title }}
+
+{{ claim.content }}{% if claim.evidence %}
+
+Evidence:
+- {{ claim.evidence | join("\n- ") }}{% endif %}
