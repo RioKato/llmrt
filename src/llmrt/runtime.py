@@ -9,9 +9,7 @@ from litellm import ChatCompletionMessageToolCall, ModelResponse
 from .tools.tool import Tool
 
 
-def _prepare_tools(
-    tools: list[Tool],
-) -> tuple[list[dict[str, Any]], dict[str, Tool]]:
+def _prepare_tools(tools: list[Tool]) -> tuple[list[dict[str, Any]], dict[str, Tool]]:
     definitions = []
     handlers = {}
     for tool in tools:
