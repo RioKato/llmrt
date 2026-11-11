@@ -5,7 +5,8 @@ from typing import Any
 
 import litellm
 from litellm import ChatCompletionMessageToolCall, ModelResponse
-from tool import Tool
+
+from .tools.tool import Tool
 
 
 def _prepare_tools(
