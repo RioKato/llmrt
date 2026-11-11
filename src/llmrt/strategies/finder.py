@@ -1,7 +1,6 @@
 """Run Finder investigations using a shared llmrt Runtime."""
 
 import asyncio
-import json
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -37,7 +36,6 @@ async def run_finder(
     *,
     reports: Path,
     tools: Sequence[Tool] = (),
-    log: Path | None = None,
     use_shell: bool = True,
     use_report: bool = True,
     overlay_dir: Path | None = None,
@@ -77,15 +75,4 @@ async def run_finder(
         messages.append({"role": "user", "content": FINDER_PROMPT if prompt is None else prompt})
 
         context = await llm.ask(messages=messages, tools=available_tools or None)
-        if log is not None:
-            log.parent.mkdir(parents=True, exist_ok=True)
-            with log.open("a", encoding="utf-8") as file:
-                file.write(
-                    json.dumps(
-                        {"event": "run_end", "context": context},
-                        ensure_ascii=False,
-                        default=str,
-                    )
-                    + "\n"
-                )
         return context[-1]["content"] or ""

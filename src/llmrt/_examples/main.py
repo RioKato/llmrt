@@ -94,7 +94,6 @@ async def _main(argv: Sequence[str] | None = None) -> int:
         llm,
         source,
         system=args.system,
-        log=args.reports / "recon.jsonl" if args.log is None else None,
         allow_shell_network=args.allow_shell_network,
     )
     print(f"[recon] Queued {len(areas)} focus areas", file=sys.stderr, flush=True)

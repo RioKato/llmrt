@@ -77,7 +77,6 @@ async def run_recon(
     source: str | Path,
     prompt: str | None = None,
     *,
-    log: str | Path | None = None,
     use_shell: bool = True,
     tools: Sequence[Tool] = (),
     system: str | None = None,
@@ -101,18 +100,6 @@ async def run_recon(
     messages.append({"role": "user", "content": RECON_PROMPT if prompt is None else prompt})
 
     context = await llm.ask(messages=messages, tools=available_tools or None)
-    if log is not None:
-        path = Path(log)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as file:
-            file.write(
-                json.dumps(
-                    {"event": "run_end", "context": context},
-                    ensure_ascii=False,
-                    default=str,
-                )
-                + "\n"
-            )
 
     areas = parse_focus_areas(context[-1]["content"] or "")
     if not areas:
