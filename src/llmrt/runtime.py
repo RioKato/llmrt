@@ -1,12 +1,17 @@
 import asyncio
 import json
+import logging
 from copy import deepcopy
+from itertools import count
 from typing import Any
+from uuid import uuid4
 
 import litellm
 from litellm import ChatCompletionMessageToolCall
 
 from .tools.tool import Tool
+
+logger = logging.getLogger(__name__)
 
 
 def _prepare_tools(tools: list[Tool]) -> tuple[list[dict[str, Any]], dict[str, Tool]]:
@@ -22,8 +27,19 @@ def _prepare_tools(tools: list[Tool]) -> tuple[list[dict[str, Any]], dict[str, T
     return definitions, handlers
 
 
-async def _run_tool(call: ChatCompletionMessageToolCall, handlers: dict[str, Tool]) -> dict[str, Any]:
+async def _run_tool(call: ChatCompletionMessageToolCall, handlers: dict[str, Tool], run_id: str) -> dict[str, Any]:
     name = call.function.name
+    logger.info(
+        "tool_call",
+        extra={
+            "run_id": run_id,
+            "data": {
+                "id": call.id,
+                "name": name,
+                "arguments": call.function.arguments,
+            },
+        },
+    )
     try:
         tool = handlers[name]
         arguments = json.loads(call.function.arguments or "{}")
@@ -34,6 +50,17 @@ async def _run_tool(call: ChatCompletionMessageToolCall, handlers: dict[str, Too
     except Exception as exc:
         content = f"{type(exc).__name__}: {exc}"
 
+    logger.info(
+        "tool_result",
+        extra={
+            "run_id": run_id,
+            "data": {
+                "id": call.id,
+                "name": name,
+                "content": content,
+            },
+        },
+    )
     return {"role": "tool", "tool_call_id": call.id, "name": name, "content": content}
 
 
@@ -100,47 +127,104 @@ class Runtime:
         return messages
 
     async def ask(self, context: list[dict[str, Any]] | None = None, **kwargs: Any) -> list[dict[str, Any]]:
-        params = {**self._defaults, **kwargs}
-        max_input_tokens = params.pop("max_input_tokens", None)
-        if max_input_tokens is not None and (type(max_input_tokens) is not int or max_input_tokens <= 0):
-            raise ValueError("max_input_tokens must be positive")
-        model = params.get("model")
-        if max_input_tokens is None and model:
-            try:
-                max_input_tokens = litellm.get_model_info(model)["max_input_tokens"]
-            except Exception:
-                pass  # Unknown OpenAI-compatible models may lack metadata.
+        run_id = uuid4().hex
+        try:
+            params = {**self._defaults, **kwargs}
+            max_input_tokens = params.pop("max_input_tokens", None)
+            if max_input_tokens is not None and (type(max_input_tokens) is not int or max_input_tokens <= 0):
+                raise ValueError("max_input_tokens must be positive")
+            model = params.get("model")
+            if max_input_tokens is None and model:
+                try:
+                    max_input_tokens = litellm.get_model_info(model)["max_input_tokens"]
+                except Exception:
+                    pass  # Unknown OpenAI-compatible models may lack metadata.
 
-        if context is None:
-            messages = deepcopy(params.get("messages") or [])
-        else:
-            messages = deepcopy(context)
-            # Default messages are initial messages, not appended on every continuation.
-            messages.extend(deepcopy(kwargs.get("messages") or []))
-        params["messages"] = messages
+            if context is None:
+                messages = deepcopy(params.get("messages") or [])
+            else:
+                messages = deepcopy(context)
+                # Default messages are initial messages, not appended on every continuation.
+                messages.extend(deepcopy(kwargs.get("messages") or []))
+            params["messages"] = messages
 
-        tools = params.get("tools")
-        handlers = {}
-        if tools is not None:
-            tools, handlers = _prepare_tools(tools)
-            params["tools"] = tools
+            tools = params.get("tools")
+            handlers = {}
+            if tools is not None:
+                tools, handlers = _prepare_tools(tools)
+                params["tools"] = tools
 
-        # The full context is append-only; only the API-facing projection is reduced.
-        while True:
-            request_messages = await self.reduce(messages, max_input_tokens, model, tools)
-            params["messages"] = request_messages
+            logger.info(
+                "run_start",
+                extra={
+                    "run_id": run_id,
+                    "data": {
+                        "model": model,
+                        "messages": messages,
+                        "tools": tools,
+                    },
+                },
+            )
 
-            # Only API calls hold a slot; Tool calls can recursively ask().
-            async with self._semaphore:
-                response = await litellm.acompletion(**params)
-                if params.get("stream"):
-                    chunks = [chunk async for chunk in response]
-                    response = litellm.stream_chunk_builder(chunks, messages=request_messages)
+            # The full context is append-only; only the API-facing projection is reduced.
+            for round in count(1):
+                request_messages = await self.reduce(messages, max_input_tokens, model, tools)
+                params["messages"] = request_messages
+                logger.info(
+                    "llm_request",
+                    extra={
+                        "run_id": run_id,
+                        "data": {
+                            "round": round,
+                            "message_count": len(request_messages),
+                            "model": model,
+                        },
+                    },
+                )
 
-            message = response.choices[0].message
-            messages.append(message.model_dump(exclude_none=True))
-            calls = message.tool_calls
-            if not calls:
-                return messages
+                # Only API calls hold a slot; Tool calls can recursively ask().
+                async with self._semaphore:
+                    response = await litellm.acompletion(**params)
+                    if params.get("stream"):
+                        chunks = [chunk async for chunk in response]
+                        response = litellm.stream_chunk_builder(chunks, messages=request_messages)
 
-            messages.extend(await asyncio.gather(*(_run_tool(call, handlers) for call in calls)))
+                logger.info(
+                    "llm_response",
+                    extra={
+                        "run_id": run_id,
+                        "data": {
+                            "round": round,
+                            "response": response.model_dump(exclude_none=True),
+                        },
+                    },
+                )
+                message = response.choices[0].message
+                messages.append(message.model_dump(exclude_none=True))
+                calls = message.tool_calls
+                if not calls:
+                    logger.info(
+                        "run_end",
+                        extra={
+                            "run_id": run_id,
+                            "data": {
+                                "output": message.content,
+                                "message_count": len(messages),
+                            },
+                        },
+                    )
+                    return messages
+
+                messages.extend(await asyncio.gather(*(_run_tool(call, handlers, run_id) for call in calls)))
+        except BaseException as exc:
+            logger.error(
+                "run_error",
+                extra={
+                    "run_id": run_id,
+                    "data": {
+                        "error": str(exc),
+                        "type": type(exc).__name__,
+                    },
+                },
+            )
+            raise

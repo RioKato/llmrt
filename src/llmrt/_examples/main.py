@@ -5,13 +5,30 @@ Run as the installed package via its ``baseagent`` entry point.
 
 import argparse
 import asyncio
+import json
+import logging
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llmrt import Runtime
 from llmrt.strategies import FINDER_PROMPT, run_finder, run_recon
+
+
+class JsonlFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return json.dumps(
+            {
+                "time": datetime.fromtimestamp(record.created, UTC).isoformat(),
+                "run_id": record.run_id,
+                "event": record.getMessage(),
+                **getattr(record, "data", {}),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -49,6 +66,15 @@ async def _main(argv: Sequence[str] | None = None) -> int:
         params["max_input_tokens"] = args.max_input_tokens
     llm = Runtime(args.workers, **params)
 
+    if args.log is not None:
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(args.log, encoding="utf-8")
+        handler.setFormatter(JsonlFormatter())
+        runtime_logger = logging.getLogger("llmrt.runtime")
+        runtime_logger.addHandler(handler)
+        runtime_logger.setLevel(logging.INFO)
+        runtime_logger.propagate = False
+
     if not args.auto_focus:
         print(
             await run_finder(
@@ -56,7 +82,6 @@ async def _main(argv: Sequence[str] | None = None) -> int:
                 source,
                 args.prompt,
                 reports=args.reports,
-                log=args.log,
                 overlay_dir=overlay_dir,
                 system=args.system,
                 allow_shell_network=args.allow_shell_network,
@@ -69,7 +94,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
         llm,
         source,
         system=args.system,
-        log=args.reports / "recon.jsonl",
+        log=args.reports / "recon.jsonl" if args.log is None else None,
         allow_shell_network=args.allow_shell_network,
     )
     print(f"[recon] Queued {len(areas)} focus areas", file=sys.stderr, flush=True)
@@ -83,9 +108,6 @@ async def _main(argv: Sequence[str] | None = None) -> int:
             "so avoid duplicate work. Follow relevant connections across "
             "subsystems, and broaden your search if the area is exhausted."
         )
-        log = args.log
-        if log is not None:
-            log = log.with_name(f"{log.stem}.focus_{index:03d}{log.suffix}")
         print(f"[finder {index}] Started: {focus}", file=sys.stderr, flush=True)
         task = asyncio.create_task(
             run_finder(
@@ -93,7 +115,6 @@ async def _main(argv: Sequence[str] | None = None) -> int:
                 source,
                 focus_prompt,
                 reports=args.reports,
-                log=log,
                 overlay_dir=overlay_dir,
                 system=args.system,
                 allow_shell_network=args.allow_shell_network,
