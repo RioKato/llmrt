@@ -143,7 +143,7 @@ class Runtime:
 
             message = response.choices[0].message
             messages.append(message.model_dump(exclude_none=True))
-            calls = getattr(message, "tool_calls", None)
+            calls = message.tool_calls
             if not calls:
                 return response, messages
 
