@@ -10,11 +10,62 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from llmrt import Runtime
-from llmrt.runner import Runner
-from llmrt.strategies import FINDER_PROMPT, RECON_PROMPT
+from llmrt import Runner, Runtime
 from llmrt.tools import Report, Shell
 from llmrt.util import overlay
+
+RECON_PROMPT = """\
+You are performing reconnaissance for an authorized source-code security audit.
+Your task is to partition the codebase into independently investigable attack
+surfaces for multiple vulnerability-finding agents.
+
+Source root: /workspace
+
+Identify approximately 5–15 distinct subsystems that process untrusted input.
+Prefer partitions by parser, input format, protocol phase, or other distinct
+processing paths. Avoid partitions that are so narrow they describe a single
+statement, so broad they cover most of the project, or overlapping enough that
+several agents would investigate the same path.
+
+Explore the source tree yourself. Begin with source files and entry points,
+then inspect dispatchers, registration tables, format detection, and processing
+functions. For each subsystem give a useful function or file pattern and its
+relevant operations (such as parsing lengths, allocating objects, decompressing,
+or managing state). Do not claim a property that you have not verified in code.
+
+When complete, output exactly one JSON object with a "focus_areas" array of
+self-contained strings. Each string will be passed directly to a separate
+agent as a starting direction. Use this format:
+
+{
+  "focus_areas": [
+    "Subsystem (function or file pattern) — relevant operations",
+    "Other subsystem (function or file pattern) — relevant operations"
+  ]
+}
+
+Output valid JSON only: no markdown fences or commentary. A focus area is a
+starting point, not a prohibition on following relevant calls into other
+subsystems.
+"""
+
+
+FINDER_PROMPT = """\
+You are conducting authorized security research on the source code at /workspace.
+Your task is to find real security vulnerabilities.
+
+Explore the source and understand how untrusted inputs reach security-sensitive
+operations. Investigate suspicious behavior, establish whether it is reachable,
+and verify candidate findings using source evidence or reproducible tests where
+possible. Prioritize vulnerabilities with meaningful security impact over crashes
+that are merely clean error handling or simple denial of service.
+
+When you validate a finding, use the report tool to save a Markdown report with
+its impact, triggering conditions, supporting evidence, and reproduction steps
+where available. Reporting a finding does not end the investigation; continue
+searching for other vulnerabilities.
+"""
+
 
 VERIFIER_PROMPT = """\
 You are conducting authorized security research on the source code at /workspace.
@@ -93,32 +144,6 @@ async def finder(
         print(f"[finder] Failed: {exc}", file=sys.stderr, flush=True)
 
 
-async def save_report(
-    report: dict[str, Any],
-    *,
-    directory: Path,
-    next_queue: asyncio.Queue[tuple[str, str] | None] | None = None,
-    failures: list[str],
-) -> None:
-    try:
-        body = f"# {report['title']}\n\n{report['content'].rstrip()}\n"
-        if report.get("evidence"):
-            body += "\n## Evidence\n\n" + "\n".join(f"- {item}" for item in report["evidence"]) + "\n"
-        directory.mkdir(parents=True, exist_ok=True)
-        with (directory / f"{report['id']}.md").open("x", encoding="utf-8") as file:
-            file.write(body)
-
-        if next_queue is not None:
-            claim = f"Finding ID: {report['id']}\nTitle: {report['title']}\n\n{report['content']}"
-            if report.get("evidence"):
-                claim += "\n\nEvidence:\n" + "\n".join(f"- {x}" for x in report["evidence"])
-            await next_queue.put((report["id"], claim))
-    except Exception as exc:
-        label = "report" if next_queue is not None else "verified report"
-        failures.append(label)
-        print(f"[{label}] Failed: {exc}", file=sys.stderr, flush=True)
-
-
 async def verifier(
     item: tuple[str, str],
     *,
@@ -143,6 +168,32 @@ async def verifier(
     except Exception as exc:
         failures.append("verifier")
         print(f"[verifier] Failed: {exc}", file=sys.stderr, flush=True)
+
+
+async def save_report(
+    report: dict[str, Any],
+    *,
+    directory: Path,
+    next_queue: asyncio.Queue[tuple[str, str] | None] | None = None,
+    failures: list[str],
+) -> None:
+    try:
+        body = f"# {report['title']}\n\n{report['content'].rstrip()}\n"
+        if report.get("evidence"):
+            body += "\n## Evidence\n\n" + "\n".join(f"- {item}" for item in report["evidence"]) + "\n"
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / f"{report['id']}.md").open("x", encoding="utf-8") as file:
+            file.write(body)
+
+        if next_queue is not None:
+            claim = f"Finding ID: {report['id']}\nTitle: {report['title']}\n\n{report['content']}"
+            if report.get("evidence"):
+                claim += "\n\nEvidence:\n" + "\n".join(f"- {x}" for x in report["evidence"])
+            await next_queue.put((report["id"], claim))
+    except Exception as exc:
+        label = "report" if next_queue is not None else "verified report"
+        failures.append(label)
+        print(f"[{label}] Failed: {exc}", file=sys.stderr, flush=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
