@@ -38,13 +38,15 @@ async def run_finder(
     reports: Path,
     tools: Sequence[Tool] = (),
     log: Path | None = None,
+    use_shell: bool = True,
+    use_log: bool = True,
     overlay_dir: Path | None = None,
     system: str | None = None,
     allow_shell_network: bool = False,
 ) -> str:
     with ExitStack() as stack:
         workspace_overlay = None
-        if overlay_dir is not None:
+        if use_shell and overlay_dir is not None:
             overlay = Path(overlay_dir).resolve()
             upper, work = overlay / "upper", overlay / "work"
             if not upper.is_dir() or not work.is_dir():
@@ -60,17 +62,20 @@ async def run_finder(
             await asyncio.to_thread(shutil.copytree, upper, workspace_overlay / "upper")
             (workspace_overlay / "work").mkdir()
 
-        shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=workspace_overlay)
-        if allow_shell_network:
-            shell.share_net()
+        available_tools = [Report(reports), *tools]
+        if use_shell:
+            shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=workspace_overlay)
+            if allow_shell_network:
+                shell.share_net()
+            available_tools.insert(0, shell)
 
         messages: list[dict[str, Any]] = []
         if system is not None:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": FINDER_PROMPT if prompt is None else prompt})
 
-        context = await llm.ask(messages=messages, tools=[shell, Report(reports), *tools])
-        if log is not None:
+        context = await llm.ask(messages=messages, tools=available_tools)
+        if use_log and log is not None:
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a", encoding="utf-8") as file:
                 file.write(

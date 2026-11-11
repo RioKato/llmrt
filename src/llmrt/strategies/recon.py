@@ -78,26 +78,31 @@ async def run_recon(
     prompt: str | None = None,
     *,
     log: str | Path | None = None,
+    use_shell: bool = True,
+    use_log: bool = True,
     tools: Sequence[Tool] = (),
     system: str | None = None,
     allow_shell_network: bool = False,
 ) -> list[str]:
     """Run Recon against the original, read-only source tree.
 
-    Recon uses Runtime and the read-only bubblewrap shell, without Report.
+    Recon uses Runtime and optionally the read-only bubblewrap shell, without Report.
     It finishes on the first non-tool answer; tool rounds are not capped.
     """
-    shell = Shell().sandbox().workspace(source, "/workspace")
-    if allow_shell_network:
-        shell.share_net()
+    available_tools = list(tools)
+    if use_shell:
+        shell = Shell().sandbox().workspace(source, "/workspace")
+        if allow_shell_network:
+            shell.share_net()
+        available_tools.insert(0, shell)
 
     messages: list[dict[str, Any]] = []
     if system is not None:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": RECON_PROMPT if prompt is None else prompt})
 
-    context = await llm.ask(messages=messages, tools=[shell, *tools])
-    if log is not None:
+    context = await llm.ask(messages=messages, tools=available_tools)
+    if use_log and log is not None:
         path = Path(log)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as file:
