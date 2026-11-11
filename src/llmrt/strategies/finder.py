@@ -4,12 +4,13 @@ import asyncio
 import json
 import shutil
 import tempfile
+from collections.abc import Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
 from llmrt import Runtime
-from llmrt.tools import Report, Shell
+from llmrt.tools import Report, Shell, Tool
 
 # Adapted to a generic source-code audit from Anthropic's reference Finder prompt.
 FINDER_PROMPT = """\
@@ -35,6 +36,7 @@ async def run_finder(
     prompt: str | None = None,
     *,
     reports: Path,
+    tools: Sequence[Tool] = (),
     log: Path | None = None,
     overlay_dir: Path | None = None,
     system: str | None = None,
@@ -67,7 +69,7 @@ async def run_finder(
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": FINDER_PROMPT if prompt is None else prompt})
 
-        context = await llm.ask(messages=messages, tools=[shell, Report(reports)])
+        context = await llm.ask(messages=messages, tools=[shell, Report(reports), *tools])
         if log is not None:
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a", encoding="utf-8") as file:

@@ -6,11 +6,12 @@ Adapted from Anthropic's defending-code-reference-harness recon stage
 
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from llmrt import Runtime
-from llmrt.tools import Shell
+from llmrt.tools import Shell, Tool
 
 RECON_PROMPT = """\
 You are performing reconnaissance for an authorized source-code security audit.
@@ -77,6 +78,7 @@ async def run_recon(
     prompt: str | None = None,
     *,
     log: str | Path | None = None,
+    tools: Sequence[Tool] = (),
     system: str | None = None,
     allow_shell_network: bool = False,
 ) -> list[str]:
@@ -94,7 +96,7 @@ async def run_recon(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": RECON_PROMPT if prompt is None else prompt})
 
-    context = await llm.ask(messages=messages, tools=[shell])
+    context = await llm.ask(messages=messages, tools=[shell, *tools])
     if log is not None:
         path = Path(log)
         path.parent.mkdir(parents=True, exist_ok=True)
