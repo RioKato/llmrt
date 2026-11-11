@@ -154,6 +154,9 @@ class Runtime:
                 tools, handlers = _prepare_tools(tools)
                 params["tools"] = tools
 
+            if not params.get("tools"):
+                params.pop("tools", None)
+
             logger.info(
                 "run_start",
                 extra={
