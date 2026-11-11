@@ -66,6 +66,15 @@ searching for other vulnerabilities.
 """
 
 
+FINDER_FOCUS_PROMPT = """\
+## Focus area
+Concentrate this investigation on: {focus}
+Begin there. Other investigations can start in different areas, so avoid duplicate
+work. Follow relevant connections across subsystems, and broaden your search
+if the area is exhausted.
+"""
+
+
 VERIFIER_PROMPT = """\
 You are conducting authorized security research on the source code at /workspace.
 Independently verify the vulnerability claim below. Check its triggering
@@ -79,6 +88,13 @@ hypotheses.
 
 Vulnerability claim to verify:
 """
+
+
+def create_overlay(root: Path) -> Path:
+    directory = root / uuid4().hex
+    (directory / "upper").mkdir(parents=True)
+    (directory / "work").mkdir()
+    return directory
 
 
 async def recon(
@@ -104,13 +120,7 @@ async def recon(
             raise ValueError("Recon did not emit a valid JSON object with nonempty focus_areas")
         print(f"[recon] Queued {len(areas)} focus areas", file=sys.stderr, flush=True)
         for index, focus in enumerate(areas, 1):
-            focus_prompt = (FINDER_PROMPT if finder_prompt is None else finder_prompt) + (
-                "\n\n## Focus area\n"
-                f"Concentrate this investigation on: {focus.strip()}\n"
-                "Begin there. Other investigations can start in different areas, "
-                "so avoid duplicate work. Follow relevant connections across "
-                "subsystems, and broaden your search if the area is exhausted."
-            )
+            focus_prompt = (FINDER_PROMPT if finder_prompt is None else finder_prompt) + "\n" + FINDER_FOCUS_PROMPT.format(focus=focus.strip())
             await finder_queue.put((index, focus_prompt))
     except Exception as exc:
         failures.append("recon")
@@ -129,9 +139,7 @@ async def finder(
     index, prompt = item
     try:
         print(f"[finder {index}] Started", file=sys.stderr, flush=True)
-        overlay_dir = overlay_root / uuid4().hex
-        (overlay_dir / "upper").mkdir(parents=True)
-        (overlay_dir / "work").mkdir()
+        overlay_dir = create_overlay(overlay_root)
         shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=overlay_dir)
         context = await llm.ask(
             messages=[{"role": "user", "content": prompt}],
@@ -157,9 +165,7 @@ async def verifier(
     report_id, claim = item
     try:
         print(f"[verifier {report_id}] Started", file=sys.stderr, flush=True)
-        overlay_dir = overlay_root / uuid4().hex
-        (overlay_dir / "upper").mkdir(parents=True)
-        (overlay_dir / "work").mkdir()
+        overlay_dir = create_overlay(overlay_root)
         shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=overlay_dir)
         context = await llm.ask(
             messages=[{"role": "user", "content": VERIFIER_PROMPT + "\n" + claim}],
