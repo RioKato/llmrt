@@ -1,6 +1,6 @@
-"""Tool for saving Markdown reports."""
+"""Tool for submitting Markdown reports to a queue."""
 
-from pathlib import Path
+import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -10,7 +10,7 @@ class Report:
         "type": "function",
         "function": {
             "name": "report",
-            "description": "Save a finding as a Markdown report. Reporting does not end the investigation.",
+            "description": "Submit a finding as a Markdown report. Reporting does not end the investigation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -24,8 +24,8 @@ class Report:
         },
     }
 
-    def __init__(self, directory: str | Path) -> None:
-        self.directory = Path(directory)
+    def __init__(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        self.queue = queue
 
     async def call(self, arguments: dict[str, Any]) -> dict[str, Any]:
         title = arguments["title"]
@@ -39,18 +39,5 @@ class Report:
         if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
             raise TypeError("evidence must be a list of strings")
 
-        body = f"# {title}\n\n{content.rstrip()}\n"
-        if evidence:
-            body += "\n## Evidence\n\n" + "\n".join(f"- {item}" for item in evidence) + "\n"
-
-        self.directory.mkdir(parents=True, exist_ok=True)
-        while True:
-            report_id = f"R{uuid4().hex[:12]}"
-            try:
-                with (self.directory / f"{report_id}.md").open("x", encoding="utf-8") as file:
-                    file.write(body)
-                break
-            except FileExistsError:
-                continue
-
+        await self.queue.put({**arguments, "id": uuid4().hex})
         return {"ok": True, "id": report_id}
