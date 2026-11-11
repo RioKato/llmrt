@@ -4,15 +4,14 @@ import argparse
 import asyncio
 import json
 import sys
-import tempfile
 from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from llmrt import Runner, Runtime
 from llmrt.tools import Report, Shell
-from llmrt.util import overlay
 
 RECON_PROMPT = """\
 You are performing reconnaissance for an authorized source-code security audit.
@@ -130,12 +129,14 @@ async def finder(
     index, prompt = item
     try:
         print(f"[finder {index}] Started", file=sys.stderr, flush=True)
-        shell = Shell().sandbox()
-        async with overlay(shell, source, overlay_root):
-            context = await llm.ask(
-                messages=[{"role": "user", "content": prompt}],
-                tools=[shell, Report(report_queue)],
-            )
+        overlay_dir = overlay_root / uuid4().hex
+        (overlay_dir / "upper").mkdir(parents=True)
+        (overlay_dir / "work").mkdir()
+        shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=overlay_dir)
+        context = await llm.ask(
+            messages=[{"role": "user", "content": prompt}],
+            tools=[shell, Report(report_queue)],
+        )
         result = context[-1]["content"] or ""
         print(f"[finder {index}] Finished", file=sys.stderr, flush=True)
         print(f"[finder {index}] {result}")
@@ -156,12 +157,14 @@ async def verifier(
     report_id, claim = item
     try:
         print(f"[verifier {report_id}] Started", file=sys.stderr, flush=True)
-        shell = Shell().sandbox()
-        async with overlay(shell, source, overlay_root):
-            context = await llm.ask(
-                messages=[{"role": "user", "content": VERIFIER_PROMPT + "\n" + claim}],
-                tools=[shell, Report(verified_report_queue)],
-            )
+        overlay_dir = overlay_root / uuid4().hex
+        (overlay_dir / "upper").mkdir(parents=True)
+        (overlay_dir / "work").mkdir()
+        shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=overlay_dir)
+        context = await llm.ask(
+            messages=[{"role": "user", "content": VERIFIER_PROMPT + "\n" + claim}],
+            tools=[shell, Report(verified_report_queue)],
+        )
         result = context[-1]["content"] or ""
         print(f"[verifier {report_id}] Finished", file=sys.stderr, flush=True)
         print(f"[verifier {report_id}] {result}")
@@ -225,33 +228,29 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     verified_report_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     failures: list[str] = []
 
-    with tempfile.TemporaryDirectory(prefix="llmrt-overlay-") as directory:
-        overlay_root = Path(directory)
-        (overlay_root / "upper").mkdir()
-        (overlay_root / "work").mkdir()
+    overlay_root = Path("overlays")
+    runner = Runner()
+    runner.register(recon_queue, partial(recon, llm=llm, source=source, finder_queue=finder_queue, finder_prompt=args.prompt, failures=failures))
+    runner.register(finder_queue, partial(finder, llm=llm, source=source, overlay_root=overlay_root, report_queue=report_queue, failures=failures))
+    runner.register(report_queue, partial(save_report, directory=reports / "found", next_queue=verifier_queue, failures=failures))
+    runner.register(verifier_queue, partial(verifier, llm=llm, source=source, overlay_root=overlay_root, verified_report_queue=verified_report_queue, failures=failures))
+    runner.register(verified_report_queue, partial(save_report, directory=reports / "verified", failures=failures))
 
-        runner = Runner()
-        runner.register(recon_queue, partial(recon, llm=llm, source=source, finder_queue=finder_queue, finder_prompt=args.prompt, failures=failures))
-        runner.register(finder_queue, partial(finder, llm=llm, source=source, overlay_root=overlay_root, report_queue=report_queue, failures=failures))
-        runner.register(report_queue, partial(save_report, directory=reports / "found", next_queue=verifier_queue, failures=failures))
-        runner.register(verifier_queue, partial(verifier, llm=llm, source=source, overlay_root=overlay_root, verified_report_queue=verified_report_queue, failures=failures))
-        runner.register(verified_report_queue, partial(save_report, directory=reports / "verified", failures=failures))
-
-        consumer = asyncio.create_task(runner.run())
-        try:
-            await recon_queue.put(RECON_PROMPT)
-            await recon_queue.join()
-            await finder_queue.join()
-            await report_queue.join()
-            await verifier_queue.join()
-            await verified_report_queue.join()
-        finally:
-            await recon_queue.put(None)
-            await finder_queue.put(None)
-            await report_queue.put(None)
-            await verifier_queue.put(None)
-            await verified_report_queue.put(None)
-            await consumer
+    consumer = asyncio.create_task(runner.run())
+    try:
+        await recon_queue.put(RECON_PROMPT)
+        await recon_queue.join()
+        await finder_queue.join()
+        await report_queue.join()
+        await verifier_queue.join()
+        await verified_report_queue.join()
+    finally:
+        await recon_queue.put(None)
+        await finder_queue.put(None)
+        await report_queue.put(None)
+        await verifier_queue.put(None)
+        await verified_report_queue.put(None)
+        await consumer
 
     return 1 if failures else 0
 
