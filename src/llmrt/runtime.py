@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from copy import deepcopy
+from functools import partial
 from itertools import count
 from typing import Any
 from uuid import uuid4
@@ -82,8 +84,7 @@ class Runtime:
         self,
         context: list[dict[str, Any]],
         max_input_tokens: int | None,
-        model: str | None,
-        tools: list[dict[str, Any]] | None,
+        token_counter: Callable[..., int] | None,
     ) -> list[dict[str, Any]]:
         """Fit a copy of the full context into the token budget.
 
@@ -95,10 +96,10 @@ class Runtime:
         if max_input_tokens is None:
             return messages
 
-        if model is None:
+        if token_counter is None:
             return messages
         try:
-            count = litellm.token_counter(model=model, messages=messages, tools=tools)
+            count = token_counter(messages=messages)
         except Exception:
             return messages  # Leave context-window enforcement to the provider.
 
@@ -122,7 +123,7 @@ class Runtime:
                 raise ValueError("Context exceeds max_input_tokens; cannot reduce further")
 
             del messages[start:end]
-            count = litellm.token_counter(model=model, messages=messages, tools=tools)
+            count = token_counter(messages=messages)
 
         return messages
 
@@ -169,9 +170,11 @@ class Runtime:
                 },
             )
 
+            token_counter = partial(litellm.token_counter, model=model, tools=tools) if model else None
+
             # The full context is append-only; only the API-facing projection is reduced.
             for round in count(1):
-                request_messages = await self.reduce(messages, max_input_tokens, model, tools)
+                request_messages = await self.reduce(messages, max_input_tokens, token_counter)
                 params["messages"] = request_messages
                 logger.info(
                     "llm_request",
