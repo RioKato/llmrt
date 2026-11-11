@@ -25,7 +25,7 @@ class Report:
     }
 
     def __init__(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        self.queue = queue
+        self._queue = queue
 
     async def call(self, arguments: dict[str, Any]) -> dict[str, Any]:
         title = arguments["title"]
@@ -39,5 +39,5 @@ class Report:
         if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
             raise TypeError("evidence must be a list of strings")
 
-        await self.queue.put({**arguments, "id": uuid4().hex})
+        await self._queue.put({**arguments, "id": uuid4().hex})
         return {"ok": True, "id": report_id}

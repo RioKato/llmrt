@@ -12,10 +12,10 @@ PathArg = str | os.PathLike[str]
 
 class Bwrap:
     def __init__(self, *options: PathArg) -> None:
-        self.options: list[PathArg] = list(options)
+        self._options: list[PathArg] = list(options)
 
     def _add(self, option: str, *args: PathArg) -> Self:
-        self.options.extend((option, *args))
+        self._options.extend((option, *args))
         return self
 
     # Namespaces
@@ -221,7 +221,7 @@ class Bwrap:
         return self._add("--not-a-security-boundary")
 
     def run(self, command: Sequence[PathArg], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
-        return subprocess.run(["bwrap", *self.options, "--", *command], **kwargs)
+        return subprocess.run(["bwrap", *self._options, "--", *command], **kwargs)
 
     # Convenience presets
 
