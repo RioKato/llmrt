@@ -23,9 +23,7 @@ def _prepare_tools(
     return definitions, handlers
 
 
-async def _run_tool(
-    call: ChatCompletionMessageToolCall, handlers: dict[str, Tool]
-) -> dict[str, Any]:
+async def _run_tool(call: ChatCompletionMessageToolCall, handlers: dict[str, Tool]) -> dict[str, Any]:
     name = call.function.name
     try:
         tool = handlers[name]
@@ -80,33 +78,22 @@ class Runtime:
 
         while count > max_input_tokens:
             fixed = 0
-            while fixed < len(messages) and messages[fixed]["role"] in (
-                "system",
-                "developer",
-            ):
+            while fixed < len(messages) and messages[fixed]["role"] in ("system", "developer"):
                 fixed += 1
             if fixed < len(messages) and messages[fixed]["role"] == "user":
                 fixed += 1  # Keep the initial user prompt.
 
             start = next(
-                (
-                    i
-                    for i in range(fixed, len(messages))
-                    if messages[i]["role"] == "assistant"
-                ),
+                (i for i in range(fixed, len(messages)) if messages[i]["role"] == "assistant"),
                 None,
             )
             if start is None:
-                raise ValueError(
-                    "Context exceeds max_input_tokens; cannot reduce further"
-                )
+                raise ValueError("Context exceeds max_input_tokens; cannot reduce further")
             end = start + 1
             while end < len(messages) and messages[end]["role"] == "tool":
                 end += 1
             if not any(msg["role"] == "assistant" for msg in messages[end:]):
-                raise ValueError(
-                    "Context exceeds max_input_tokens; cannot reduce further"
-                )
+                raise ValueError("Context exceeds max_input_tokens; cannot reduce further")
 
             del messages[start:end]
             count = litellm.token_counter(model=model, messages=messages, tools=tools)
@@ -118,9 +105,7 @@ class Runtime:
     ) -> tuple[ModelResponse, list[dict[str, Any]]]:
         params = {**self._defaults, **kwargs}
         max_input_tokens = params.pop("max_input_tokens", None)
-        if max_input_tokens is not None and (
-            type(max_input_tokens) is not int or max_input_tokens <= 0
-        ):
+        if max_input_tokens is not None and (type(max_input_tokens) is not int or max_input_tokens <= 0):
             raise ValueError("max_input_tokens must be positive")
         model = params.get("model")
         if max_input_tokens is None and model:
@@ -145,9 +130,7 @@ class Runtime:
 
         # The full context is append-only; only the API-facing projection is reduced.
         while True:
-            request_messages = await self.reduce(
-                messages, max_input_tokens, model, tools
-            )
+            request_messages = await self.reduce(messages, max_input_tokens, model, tools)
             params["messages"] = request_messages
 
             # Only API calls hold a slot; Tool calls can recursively ask().
@@ -155,9 +138,7 @@ class Runtime:
                 response = await litellm.acompletion(**params)
                 if params.get("stream"):
                     chunks = [chunk async for chunk in response]
-                    response = litellm.stream_chunk_builder(
-                        chunks, messages=request_messages
-                    )
+                    response = litellm.stream_chunk_builder(chunks, messages=request_messages)
 
             message = response.choices[0].message
             messages.append(message.model_dump(exclude_none=True))
@@ -165,6 +146,4 @@ class Runtime:
             if not calls:
                 return response, messages
 
-            messages.extend(
-                await asyncio.gather(*(_run_tool(call, handlers) for call in calls))
-            )
+            messages.extend(await asyncio.gather(*(_run_tool(call, handlers) for call in calls)))
