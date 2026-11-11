@@ -79,7 +79,6 @@ async def run_recon(
     *,
     log: str | Path | None = None,
     use_shell: bool = True,
-    use_log: bool = True,
     tools: Sequence[Tool] = (),
     system: str | None = None,
     allow_shell_network: bool = False,
@@ -101,8 +100,8 @@ async def run_recon(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": RECON_PROMPT if prompt is None else prompt})
 
-    context = await llm.ask(messages=messages, tools=available_tools)
-    if use_log and log is not None:
+    context = await llm.ask(messages=messages, tools=available_tools or None)
+    if log is not None:
         path = Path(log)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as file:

@@ -39,7 +39,7 @@ async def run_finder(
     tools: Sequence[Tool] = (),
     log: Path | None = None,
     use_shell: bool = True,
-    use_log: bool = True,
+    use_report: bool = True,
     overlay_dir: Path | None = None,
     system: str | None = None,
     allow_shell_network: bool = False,
@@ -62,7 +62,9 @@ async def run_finder(
             await asyncio.to_thread(shutil.copytree, upper, workspace_overlay / "upper")
             (workspace_overlay / "work").mkdir()
 
-        available_tools = [Report(reports), *tools]
+        available_tools = [*tools]
+        if use_report:
+            available_tools.insert(0, Report(reports))
         if use_shell:
             shell = Shell().sandbox().workspace(source, "/workspace", overlay_dir=workspace_overlay)
             if allow_shell_network:
@@ -74,8 +76,8 @@ async def run_finder(
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": FINDER_PROMPT if prompt is None else prompt})
 
-        context = await llm.ask(messages=messages, tools=available_tools)
-        if use_log and log is not None:
+        context = await llm.ask(messages=messages, tools=available_tools or None)
+        if log is not None:
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a", encoding="utf-8") as file:
                 file.write(
