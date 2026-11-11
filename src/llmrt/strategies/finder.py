@@ -67,7 +67,7 @@ async def run_finder(
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": FINDER_PROMPT if prompt is None else prompt})
 
-        response, context = await llm.ask(messages=messages, tools=[shell, Report(reports)])
+        context = await llm.ask(messages=messages, tools=[shell, Report(reports)])
         if log is not None:
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a", encoding="utf-8") as file:
@@ -79,4 +79,4 @@ async def run_finder(
                     )
                     + "\n"
                 )
-        return response.choices[0].message.content or ""
+        return context[-1]["content"] or ""

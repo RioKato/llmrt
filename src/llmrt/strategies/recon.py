@@ -94,7 +94,7 @@ async def run_recon(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": RECON_PROMPT if prompt is None else prompt})
 
-    response, context = await llm.ask(messages=messages, tools=[shell])
+    context = await llm.ask(messages=messages, tools=[shell])
     if log is not None:
         path = Path(log)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,7 @@ async def run_recon(
                 + "\n"
             )
 
-    areas = parse_focus_areas(response.choices[0].message.content or "")
+    areas = parse_focus_areas(context[-1]["content"] or "")
     if not areas:
         raise ValueError("Recon did not emit a valid JSON object with nonempty focus_areas")
     return areas

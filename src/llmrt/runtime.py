@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 import litellm
-from litellm import ChatCompletionMessageToolCall, ModelResponse
+from litellm import ChatCompletionMessageToolCall
 
 from .tools.tool import Tool
 
@@ -99,7 +99,7 @@ class Runtime:
 
         return messages
 
-    async def ask(self, context: list[dict[str, Any]] | None = None, **kwargs: Any) -> tuple[ModelResponse, list[dict[str, Any]]]:
+    async def ask(self, context: list[dict[str, Any]] | None = None, **kwargs: Any) -> list[dict[str, Any]]:
         params = {**self._defaults, **kwargs}
         max_input_tokens = params.pop("max_input_tokens", None)
         if max_input_tokens is not None and (type(max_input_tokens) is not int or max_input_tokens <= 0):
@@ -141,6 +141,6 @@ class Runtime:
             messages.append(message.model_dump(exclude_none=True))
             calls = message.tool_calls
             if not calls:
-                return response, messages
+                return messages
 
             messages.extend(await asyncio.gather(*(_run_tool(call, handlers) for call in calls)))
