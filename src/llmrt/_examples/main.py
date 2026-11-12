@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from llmrt import Runner, Runtime
-from llmrt.prompts import render_finder, render_recon, render_verifier
+from llmrt.prompts import render_finder, render_recon, render_report, render_verifier
 from llmrt.tools import Report, Shell
 
 
@@ -111,12 +111,9 @@ async def save_report(
     failures: list[str],
 ) -> None:
     try:
-        body = f"# {report['title']}\n\n{report['content'].rstrip()}\n"
-        if report.get("evidence"):
-            body += "\n## Evidence\n\n" + "\n".join(f"- {item}" for item in report["evidence"]) + "\n"
         directory.mkdir(parents=True, exist_ok=True)
         with (directory / f"{report['id']}.md").open("x", encoding="utf-8") as file:
-            file.write(body)
+            file.write(render_report(report))
 
         if next_queue is not None:
             await next_queue.put(report)

@@ -21,3 +21,7 @@ def render_finder(focus: str | None = None) -> str:
 
 def render_verifier(claim: dict[str, Any]) -> str:
     return _environment.get_template("verifier.j2").render(claim=claim)
+
+
+def render_report(report: dict[str, Any]) -> str:
+    return _environment.get_template("report.j2").render(report=report)

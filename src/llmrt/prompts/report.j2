@@ -1,0 +1,8 @@
+# {{ report.title }}
+
+{{ report.content.rstrip() }}
+{% if report.evidence %}
+## Evidence
+
+{% for item in report.evidence %}- {{ item }}
+{% endfor %}{% endif %}
