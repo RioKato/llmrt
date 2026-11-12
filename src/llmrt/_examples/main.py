@@ -160,7 +160,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
         params["api_base"] = args.api_base
     llm = Runtime(4, **params)
 
-    log_path = args.output / "logs" / "runtime.jsonl"
+    log_path = args.output / "runtime.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(log_path, encoding="utf-8")
     handler.setFormatter(JsonlFormatter())
