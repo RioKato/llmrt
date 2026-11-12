@@ -3,8 +3,10 @@
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,20 @@ from uuid import uuid4
 from llmrt import Runner, Runtime
 from llmrt.templates import render_finder, render_recon, render_report, render_verifier
 from llmrt.tools import Report, Shell
+
+
+class JsonlFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return json.dumps(
+            {
+                "time": datetime.fromtimestamp(record.created, UTC).isoformat(),
+                "run_id": record.run_id,
+                "event": record.getMessage(),
+                **getattr(record, "data", {}),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
 
 
 def create_overlay(root: Path) -> Path:
@@ -143,6 +159,16 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     if args.api_base is not None:
         params["api_base"] = args.api_base
     llm = Runtime(4, **params)
+
+    log_path = args.output / "logs" / "runtime.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(JsonlFormatter())
+    runtime_logger = logging.getLogger("llmrt.runtime")
+    runtime_logger.addHandler(handler)
+    runtime_logger.setLevel(logging.INFO)
+    runtime_logger.propagate = False
+
     reports = args.output / "reports"
 
     recon_queue: asyncio.Queue[str | None] = asyncio.Queue()
