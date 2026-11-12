@@ -132,6 +132,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("--model", required=True)
     parser.add_argument("--api-base")
+    parser.add_argument("--output", type=Path, default=Path("."))
     args = parser.parse_args(argv)
 
     source = args.source.resolve()
@@ -142,7 +143,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     if args.api_base is not None:
         params["api_base"] = args.api_base
     llm = Runtime(4, **params)
-    reports = Path("reports")
+    reports = args.output / "reports"
 
     recon_queue: asyncio.Queue[str | None] = asyncio.Queue()
     finder_queue: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue()
@@ -151,7 +152,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     verified_report_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     failures: list[str] = []
 
-    overlay_root = Path("overlays")
+    overlay_root = args.output / "overlays"
     runner = Runner()
     runner.register(recon_queue, partial(recon, llm=llm, source=source, finder_queue=finder_queue, failures=failures))
     runner.register(finder_queue, partial(finder, llm=llm, source=source, overlay_root=overlay_root, report_queue=report_queue, failures=failures))
