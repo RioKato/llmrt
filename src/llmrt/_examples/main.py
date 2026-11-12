@@ -148,6 +148,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("--model", required=True)
     parser.add_argument("--api-base")
+    parser.add_argument("--max-input-tokens", type=int)
     parser.add_argument("--output", type=Path, default=Path("."))
     args = parser.parse_args(argv)
 
@@ -158,6 +159,8 @@ async def _main(argv: Sequence[str] | None = None) -> int:
     params: dict[str, Any] = {"model": args.model}
     if args.api_base is not None:
         params["api_base"] = args.api_base
+    if args.max_input_tokens is not None:
+        params["max_input_tokens"] = args.max_input_tokens
     llm = Runtime(4, **params)
 
     log_path = args.output / "log.jsonl"
