@@ -86,43 +86,43 @@ class Runtime:
         max_input_tokens: int | None,
         token_counter: Callable[..., int] | None,
     ) -> list[dict[str, Any]]:
-        """Fit a copy of the full context into the token budget.
+        """Limit tool output size, then discard oldest exchanges to fit the budget.
 
-        Remove oldest complete assistant/tool exchanges, preserving the
-        initial prompt and newest assistant exchange. Never alter context.
+        Keep the initial prompt and leave the original context unchanged.
         Override to implement a different reduction strategy.
         """
         messages = deepcopy(context)
-        if max_input_tokens is None:
-            return messages
+        limit = 64 * 1024
+        marker = "\n[Tool output truncated]"
+        marker_size = len(marker.encode("utf-8"))
+        for message in messages:
+            if message["role"] != "tool" or not isinstance(message.get("content"), str):
+                continue
+            content = message["content"].encode("utf-8")
+            if len(content) > limit:
+                message["content"] = content[: limit - marker_size].decode("utf-8", errors="ignore") + marker
 
-        if token_counter is None:
+        if max_input_tokens is None or token_counter is None:
             return messages
         try:
             count = token_counter(messages=messages)
         except Exception:
             return messages  # Leave context-window enforcement to the provider.
 
+        fixed = 0
+        while fixed < len(messages) and messages[fixed]["role"] in ("system", "developer"):
+            fixed += 1
+        if fixed < len(messages) and messages[fixed]["role"] == "user":
+            fixed += 1  # Keep the initial user prompt.
+
         while count > max_input_tokens:
-            fixed = 0
-            while fixed < len(messages) and messages[fixed]["role"] in ("system", "developer"):
-                fixed += 1
-            if fixed < len(messages) and messages[fixed]["role"] == "user":
-                fixed += 1  # Keep the initial user prompt.
-
-            start = next(
-                (i for i in range(fixed, len(messages)) if messages[i]["role"] == "assistant"),
-                None,
-            )
-            if start is None:
+            if fixed == len(messages):
                 raise ValueError("Context exceeds max_input_tokens; cannot reduce further")
-            end = start + 1
-            while end < len(messages) and messages[end]["role"] == "tool":
-                end += 1
-            if not any(msg["role"] == "assistant" for msg in messages[end:]):
-                raise ValueError("Context exceeds max_input_tokens; cannot reduce further")
-
-            del messages[start:end]
+            end = fixed + 1
+            if messages[fixed]["role"] == "assistant":
+                while end < len(messages) and messages[end]["role"] == "tool":
+                    end += 1
+            del messages[fixed:end]
             count = token_counter(messages=messages)
 
         return messages
