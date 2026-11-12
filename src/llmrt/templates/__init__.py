@@ -1,4 +1,4 @@
-"""Render prompt templates."""
+"""Render Jinja2 templates."""
 
 from pathlib import Path
 from typing import Any

@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from llmrt import Runner, Runtime
-from llmrt.prompts import render_finder, render_recon, render_report, render_verifier
+from llmrt.templates import render_finder, render_recon, render_report, render_verifier
 from llmrt.tools import Report, Shell
 
 
